@@ -23,7 +23,7 @@ locals {
   secret_webhook_key = local.has_secrets ? var.atlantis_gitlab_user_token != "" ? "ATLANTIS_GITLAB_WEBHOOK_SECRET" : var.atlantis_github_user_token != "" ? "ATLANTIS_GH_WEBHOOK_SECRET" : "ATLANTIS_BITBUCKET_WEBHOOK_SECRET" : "unknown_secret_webhook_key"
 
   # Container definitions
-  container_definitions = var.custom_container_definitions == "" ? var.atlantis_bitbucket_user_token != "" ? module.container_definition_bitbucket.json : module.container_definition_github_gitlab.json : var.custom_container_definitions
+  container_definitions = var.custom_container_definitions == "" ? var.atlantis_bitbucket_user_token != "" ? module.container_definition_bitbucket.json : module.container_definition_github_gitlab.json_map : var.custom_container_definitions
 
   container_definition_environment = [
     {
@@ -138,6 +138,25 @@ resource "aws_ssm_parameter" "atlantis_bitbucket_user_token" {
   value = var.atlantis_bitbucket_user_token
 }
 
+# Secrets for OAuth2_proxy
+resource "aws_ssm_parameter" "cookie_secret" {
+  name  = var.cookie_secret_ssm_parameter_name
+  type  = "SecureString"
+  value = var.cookie_secret
+}
+
+resource "aws_ssm_parameter" "client_id" {
+  name  = var.client_id_ssm_parameter_name
+  type  = "SecureString"
+  value = var.client_id
+}
+
+resource "aws_ssm_parameter" "client_secret" {
+  name  = var.client_secret_ssm_parameter_name
+  type  = "SecureString"
+  value = var.client_secret
+}
+
 ###################
 # VPC
 ###################
@@ -199,7 +218,7 @@ module "alb" {
     {
       name                 = var.name
       backend_protocol     = "HTTP"
-      backend_port         = var.atlantis_port
+      backend_port         = var.oauth_port
       target_type          = "ip"
       deregistration_delay = 10
     },
@@ -264,12 +283,12 @@ module "atlantis_sg" {
 
   name        = var.name
   vpc_id      = local.vpc_id
-  description = "Security group with open port for Atlantis (${var.atlantis_port}) from ALB, egress ports are all world open"
+  description = "Security group with open port for OAuth2_proxy (${var.oauth_port}) from ALB, egress ports are all world open"
 
   computed_ingress_with_source_security_group_id = [
     {
-      from_port                = var.atlantis_port
-      to_port                  = var.atlantis_port
+      from_port                = var.oauth_port
+      to_port                  = var.oauth_port
       protocol                 = "tcp"
       description              = "Atlantis"
       source_security_group_id = module.alb_https_sg.this_security_group_id
@@ -476,6 +495,86 @@ module "container_definition_bitbucket" {
   )
 }
 
+module "container_definition_oauth" {
+  source  = "cloudposse/ecs-container-definition/aws"
+  version = "v0.15.0"
+
+  container_image = "quay.io/pusher/oauth2_proxy:v4.1.0"
+  container_name  = "oauth-${var.name}"
+
+  container_cpu                = var.ecs_task_cpu
+  container_memory             = var.ecs_task_memory
+  container_memory_reservation = var.container_memory_reservation
+
+  port_mappings = [
+    {
+      containerPort = var.oauth_port
+      hostPort      = var.oauth_port
+      protocol      = "tcp"
+    },
+  ]
+
+  log_options = {
+    "awslogs-region"        = data.aws_region.current.name
+    "awslogs-group"         = aws_cloudwatch_log_group.atlantis.name
+    "awslogs-stream-prefix" = "ecs"
+  }
+
+  environment = [
+    {
+      name  = "OAUTH2_PROXY_EMAIL_DOMAINS"
+      value = "*"
+    },
+    {
+      name  = "OAUTH2_PROXY_UPSTREAM"
+      value = "127.0.0.1:${var.atlantis_port}"
+    },
+    {
+      name  = "OAUTH2_PROXY_PROVIDER"
+      value = "github"
+    },
+    {
+      name  = "OAUTH2_PROXY_GITHUB_ORG"
+      value = var.github_org
+    },
+    {
+      name  = "OAUTH2_PROXY_GITHUB_TEAM"
+      value = var.github_team
+    },
+    {
+      name  = "OAUTH2_PROXY_REDIRECT_URL"
+      value = var.oauth_redirect_url
+    },
+    {
+      name  = "OAUTH2_PROXY_HTTP_ADDRESS"
+      value = "0.0.0.0:${var.oauth_port}"
+    },
+    {
+      name  = "OAUTH2_PROXY_SKIP_AUTH_REGEX"
+      value = "/events"
+    },
+    {
+      name  = "OAUTH2_PROXY_SILENCE_PING_LOGGING"
+      value = "true"
+    }
+  ]
+
+  secrets = [
+    {
+      name      = "OAUTH2_PROXY_COOKIE_SECRET"
+      valueFrom = var.cookie_secret_ssm_parameter_name
+    },
+    {
+      name      = "OAUTH2_PROXY_CLIENT_ID"
+      valueFrom = var.client_id_ssm_parameter_name
+    },
+    {
+      name      = "OAUTH2_PROXY_CLIENT_SECRET"
+      valueFrom = var.client_secret_ssm_parameter_name
+    },
+  ]
+}
+
 resource "aws_ecs_task_definition" "atlantis" {
   family                   = var.name
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
@@ -485,7 +584,7 @@ resource "aws_ecs_task_definition" "atlantis" {
   cpu                      = var.ecs_task_cpu
   memory                   = var.ecs_task_memory
 
-  container_definitions = local.container_definitions
+  container_definitions = "[${local.container_definitions},${module.container_definition_oauth.json_map}]"
 }
 
 data "aws_ecs_task_definition" "atlantis" {
@@ -514,7 +613,7 @@ resource "aws_ecs_service" "atlantis" {
 
   load_balancer {
     container_name   = var.name
-    container_port   = var.atlantis_port
+    container_port   = var.oauth_port
     target_group_arn = element(module.alb.target_group_arns, 0)
   }
 }

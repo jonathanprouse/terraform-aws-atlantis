@@ -136,6 +136,24 @@ variable "atlantis_bitbucket_user_token_ssm_parameter_name" {
   default     = "/atlantis/bitbucket/user/token"
 }
 
+variable "client_id_ssm_parameter_name" {
+  description = "Name of SSM parameter to keep client id"
+  type        = string
+  default     = "/atlantis/oauth2_proxy/client/id"
+}
+
+variable "client_secret_ssm_parameter_name" {
+  description = "Name of SSM parameter to keep client secret"
+  type        = string
+  default     = "/atlantis/oauth2_proxy/client/secret"
+}
+
+variable "cookie_secret_ssm_parameter_name" {
+  description = "Name of SSM parameter to keep cookie secret"
+  type        = string
+  default     = "/atlantis/oauth2_proxy/cookie"
+}
+
 variable "ssm_kms_key_arn" {
   description = "ARN of KMS key to use for entryption and decryption of SSM Parameters. Required only if your key uses a custom KMS key and not the default key"
   type        = string
@@ -301,3 +319,42 @@ variable "aws_ssm_path" {
   type        = string
   default     = "aws"
 }
+
+variable "oauth_port" {
+  description = "Local port OAuth2_proxy should be running on. Default value is most likely fine."
+  type        = number
+  default     = 4180
+}
+
+variable "github_org" {
+  type = string
+}
+
+variable "github_team" {
+  type = string
+}
+
+variable "oauth_redirect_url" {
+  description = "The OAuth Redirect URL as registered with the App"
+  type        = string
+  default     = "https://localhost/oauth2/callback"
+}
+
+variable "client_id" {
+  description = "Value of client id to be stored in SSM"
+  type        = string
+  default     = ""
+}
+
+variable "client_secret" {
+  description = "Value of client secret to be stored in SSM"
+  type        = string
+  default     = ""
+}
+
+variable "cookie_secret" {
+  description = "Value of cookie secret to be stored in SSM"
+  type        = string
+  default     = ""
+}
+
